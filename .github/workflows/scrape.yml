@@ -1,0 +1,44 @@
+name: Hourly Price Scraper
+
+on:
+  schedule:
+    # Runs at minute 15 past every hour
+    - cron: '15 * * * *'
+  workflow_dispatch: # Allows you to run the workflow manually from the Actions tab
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+
+    # Add permissions necessary to push commits back to the repository
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13' # You can change here based on your need
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          # Ensure pandas and openpyxl are installed since they are used for Excel creation
+          pip install pandas openpyxl
+
+      - name: Run Scraper
+        env:
+          # Pulls the API key from your GitHub repository secrets
+          SCRAPER_API_KEY: ${{ secrets.SCRAPER_API_KEY }}
+        run: |
+          python scraper.py
+
+      - name: Commit and push changes
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "Auto-update price history and Excel sheet"
+          file_pattern: "price_history.json prices.xlsx"
