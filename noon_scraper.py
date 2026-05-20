@@ -93,14 +93,21 @@ def process_prices(html_content):
         if not title or title.lower() == "placeholder":
             continue
 
-        # --- PRICE EXTRACTION ---
-        item_text = item.text.replace(',', '')
-        price_match = re.search(r'EGP\s*(\d+\.?\d*)', item_text)
+        # 3. Extract Price
+        # Using separator=" " forces spaces between hidden HTML tags so numbers don't squash together
+        item_text = item.get_text(separator=" ").replace(',', '')
+        
+        # Scans the spaced-out text for the FIRST number next to EGP
+        price_match = re.search(r'EGP\s*(\d+\.?\d*)', item_text, re.IGNORECASE)
+        
+        # Fallback: If "EGP" is missing, grab the very first number that has a decimal
+        if not price_match:
+            price_match = re.search(r'(\d+\.\d{2})', item_text)
         
         if price_match:
             current_price = float(price_match.group(1))
-            
-            # Use the UNIQUE URL as the memory key, not the Title!
+
+            # 4. Compare Prices and Save to Excel
             unique_key = base_url 
             current_scraped_data[unique_key] = current_price
 
