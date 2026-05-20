@@ -102,6 +102,9 @@ def process_prices(html_content):
             try:
                 current_price = float(price_amount.text.strip().replace(',', ''))
                 current_scraped_data[title] = {"price": current_price, "link": product_link}
+            except ValueError:
+                print(f"[DEBUG] Could not parse price for '{title[:40]}...'")
+                continue
 
             # 3. Compare Prices
             if title in history:
