@@ -63,11 +63,10 @@ def process_prices(html_content):
     drops_found = False
 
     for item in unique_products:
-        # 1. Extract URL (Clean standard link only)
         raw_url = item['href']
         base_url = f"https://www.noon.com{raw_url}" if raw_url.startswith('/') else raw_url
 
-        # 2. Extract Title
+        # --- NEW TITLE EXTRACTION LOGIC ---
         title = ""
         title_el = item.find(attrs={"data-qa": "product-name"})
         if title_el:
@@ -77,20 +76,36 @@ def process_prices(html_content):
             if img and img.get('alt'):
                 title = img.get('alt').strip()
         
-        if not title:
+        # If Noon gives us "placeholder", extract the real name from the URL!
+        if not title or title.lower() == "placeholder":
+            try:
+                # Breaks down the URL and grabs the product name section
+                url_parts = raw_url.split('/')
+                for part in url_parts:
+                    if '-' in part and len(part) > 10:
+                        # Converts 'hot-60-pro-dual-sim' to 'Hot 60 Pro Dual Sim'
+                        title = part.replace('-', ' ').title() 
+                        break
+            except:
+                pass
+
+        # If it STILL couldn't find a real name, skip it
+        if not title or title.lower() == "placeholder":
             continue
 
-        # 3. Extract Price
+        # --- PRICE EXTRACTION ---
         item_text = item.text.replace(',', '')
         price_match = re.search(r'EGP\s*(\d+\.?\d*)', item_text)
         
         if price_match:
             current_price = float(price_match.group(1))
-            current_scraped_data[title] = current_price
+            
+            # Use the UNIQUE URL as the memory key, not the Title!
+            unique_key = base_url 
+            current_scraped_data[unique_key] = current_price
 
-            # 4. Compare Prices and Save to Excel
-            if title in history:
-                previous_price = history[title]
+            if unique_key in history:
+                previous_price = history[unique_key]
                 if current_price < previous_price:
                     drops_found = True
                     drop_amount = round(previous_price - current_price, 2)
@@ -100,12 +115,11 @@ def process_prices(html_content):
                     with open(CSV_FILE, mode='a', newline='', encoding='utf-8') as f:
                         writer = csv.writer(f)
                         current_time = datetime.now().strftime("%Y-%m-%d %H:%M")
-                        # Saving the clean base_url to the CSV
                         writer.writerow([current_time, title, previous_price, current_price, drop_amount, base_url])
         else:
-            print(f"[DEBUG] Skipped item: Found title '{title[:40]}...', but could not find the EGP Price.")
+            print(f"[DEBUG] Skipped item: '{title[:40]}...', no EGP Price found.")
 
-    print(f"\n[DEBUG] Successfully extracted prices for {len(current_scraped_data)} out of {len(unique_products)} items.")
+    print(f"\n[DEBUG] Successfully extracted prices for {len(current_scraped_data)} items.")
             
     if not drops_found:
         print("No Noon price drops detected this hour.")
