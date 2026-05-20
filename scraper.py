@@ -1,51 +1,48 @@
 import os
 import json
 import requests
-import pandas as pd
 from bs4 import BeautifulSoup
+import csv
+from datetime import datetime
+import re
 
+# Fetch API Key from GitHub Secrets (Same key you used for Amazon!)
 API_KEY = os.getenv('SCRAPER_API_KEY')
-TARGET_URL = "https://www.noon.com/egypt-ar/mobiles/"
-HISTORY_FILE = "price_history.json"
+
+# Noon Egypt Electronics Category
+TARGET_URL = "https://www.noon.com/egypt-en/electronics-and-mobiles/"
+
+# We use separate files so it doesn't overwrite your Amazon data
+HISTORY_FILE = "noon_price_history.json"
+CSV_FILE = "noon_price_drops.csv"
+
+# REPLACE THIS with your specific Noon Affiliate tracking parameters
+AFFILIATE_PARAMS = "utm_source=affiliate_network&utm_medium=your_affiliate_id" 
 
 def load_history():
-    """Loads the previous hour's prices from the JSON file."""
     if os.path.exists(HISTORY_FILE):
         with open(HISTORY_FILE, 'r') as file:
             return json.load(file)
     return {}
 
 def save_history(history):
-    """Saves the current prices to the JSON file."""
     with open(HISTORY_FILE, 'w') as file:
         json.dump(history, file, indent=4)
-    export_to_excel(history)
 
-def export_to_excel(history):
-    """Exports the history to an Excel file."""
-    data = []
-    for title, info in history.items():
-        if isinstance(info, dict):
-            price = info.get("price", "N/A")
-            link = info.get("link", "N/A")
-        else:
-            price = info
-            link = "N/A"
-        data.append({"Product Title": title, "Price": price, "Link": link})
-    
-    if data:
-        df = pd.DataFrame(data)
-        df.to_excel("prices.xlsx", index=False)
-        print("Exported data to prices.xlsx")
+def ensure_csv_exists():
+    if not os.path.exists(CSV_FILE):
+        with open(CSV_FILE, mode='w', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            writer.writerow(['Date Detected', 'Product Name', 'Old Price (EGP)', 'New Price (EGP)', 'Drop Amount (EGP)', 'Affiliate Link'])
 
-def scrape_amazon():
+def scrape_noon():
     if not API_KEY:
         print("Error: API Key not found!")
         return
 
-    print("Fetching current prices...")
-    # Swapped render: true to false, bypasses the 500 error on limited ScraperAPI plans 
-    payload = {'api_key': API_KEY, 'url': TARGET_URL, 'country_code': 'eg'}
+    print("Fetching current prices from Noon Egypt...")
+    # Using ScraperAPI. Note: we remove country_code to let the API route naturally
+    payload = {'api_key': API_KEY, 'url': TARGET_URL}
     
     try:
         response = requests.get('http://api.scraperapi.com', params=payload, timeout=60)
@@ -62,83 +59,77 @@ def process_prices(html_content):
     page_title = soup.title.text.strip() if soup.title else "No Title"
     print(f"\n[DEBUG] Page Title Received: {page_title}")
     
-    import json
+    # Noon product links almost always contain '/p/' in the URL
+    product_links = soup.find_all('a', href=lambda href: href and '/p/' in href)
+    
+    # Deduplicate (Noon sometimes has overlapping invisible links for the same item)
+    unique_products = {link['href']: link for link in product_links}.values()
+    print(f"[DEBUG] Found {len(unique_products)} unique products on the page.\n")
+    
     history = load_history() 
+    ensure_csv_exists()
     current_scraped_data = {}
-    products_found = 0
-
-    print("--- PRICE DROP ALERTS ---")
+    
+    print("--- NOON PRICE DROP ALERTS ---")
     drops_found = False
 
-    # Noon uses Next.js. Products are embedded in the __NEXT_DATA__ JSON script tag
-    script_tag = soup.find('script', id='__NEXT_DATA__')
-    if script_tag:
-        try:
-            data = json.loads(script_tag.string)
-            # Find the catalog hits inside the deeply nested NextJS structure
-            hits = data.get('props', {}).get('pageProps', {}).get('catalog', {}).get('hits', [])
-            
-            for item in hits:
-                title = item.get('name', 'Unknown')
-                product_link = "https://www.noon.com/egypt-ar/" + item.get('url', '')
-                current_price = item.get('price', 0)
-                
-                if current_price and title != 'Unknown':
-                    products_found += 1
-                    current_scraped_data[title] = {"price": float(current_price), "link": product_link}
-        except Exception as e:
-            print(f"[DEBUG] Error parsing __NEXT_DATA__: {e}")
-    
-    # Fallback to HTML parsing if JSON hits are empty (eg API blocks the tag)
-    if products_found == 0:
-        all_links = soup.find_all('a', href=True)
-        products_html = []
-        for link in all_links:
-            title_elem = link.find(attrs={'data-qa': lambda v: v and ('product-name' in v or 'product-box-name' in v)})
-            if title_elem:
-                products_html.append((link, title_elem))
-                
-        for item, title_element in products_html:
-            title = title_element.get('title', '').strip() or title_element.text.strip()
-            href = item['href']
-            product_link = "https://www.noon.com" + href if href.startswith('/') else href
-            
-            price_container = item.find(attrs={'data-qa': 'product-box-price'}) or item.find(class_=lambda x: x and 'price' in x.lower() if isinstance(x, str) else False)
-            price_amount = price_container.find('strong') or price_container.find('span', class_='amount') if price_container else None
-            
-            if price_amount:
-                try:
-                    current_price = float(price_amount.text.strip().replace(',', ''))
-                    current_scraped_data[title] = {"price": current_price, "link": product_link}
-                    products_found += 1
-                except ValueError:
-                    continue
+    for item in unique_products:
+        # 1. Extract URL and Build Affiliate Link
+        raw_url = item['href']
+        base_url = f"https://www.noon.com{raw_url}" if raw_url.startswith('/') else raw_url
+        
+        # Safely append affiliate parameters
+        affiliate_url = f"{base_url}&{AFFILIATE_PARAMS}" if "?" in base_url else f"{base_url}?{AFFILIATE_PARAMS}"
 
-    print(f"[DEBUG] Found {products_found} products on the page.\n")
+        # 2. Extract Title
+        title = ""
+        # Noon typically uses this data attribute for product names
+        title_el = item.find(attrs={"data-qa": "product-name"})
+        if title_el:
+            title = title_el.text.strip()
+        else:
+            # Fallback: Grab the alt text from the product image
+            img = item.find('img')
+            if img and img.get('alt'):
+                title = img.get('alt').strip()
+        
+        if not title:
+            continue # Skip items where we can't figure out the name
 
-    for title, info in current_scraped_data.items():
-        current_price = info["price"]
-        # 3. Compare Prices
-        if title in history:
-            previous_data = history[title]
-            previous_price = previous_data["price"] if isinstance(previous_data, dict) else previous_data
-            if current_price < previous_price:
-                drops_found = True
-                drop_amount = round(previous_price - current_price, 2)
-                print(f"📉 DROP DETECTED: {title[:60]}...")
-                print(f"   Old Price: ${previous_price} | New Price: ${current_price} | You save: ${drop_amount}\n")
+        # 3. Extract Price (Robust Regex Method)
+        # Remove commas first (so "1,250" becomes "1250")
+        item_text = item.text.replace(',', '')
+        
+        # Search for "EGP" followed by any spacing, then numbers
+        price_match = re.search(r'EGP\s*(\d+\.?\d*)', item_text)
+        
+        if price_match:
+            current_price = float(price_match.group(1))
+            current_scraped_data[title] = current_price
 
-    # --- NEW DEBUG SUMMARY ---
-    print(f"\n[DEBUG] Successfully extracted prices for {len(current_scraped_data)} items.")
+            # 4. Compare Prices and Save to Excel
+            if title in history:
+                previous_price = history[title]
+                if current_price < previous_price:
+                    drops_found = True
+                    drop_amount = round(previous_price - current_price, 2)
+                    
+                    print(f"📉 DROP DETECTED: {title[:50]}...")
+                    
+                    # Log to CSV
+                    with open(CSV_FILE, mode='a', newline='', encoding='utf-8') as f:
+                        writer = csv.writer(f)
+                        current_time = datetime.now().strftime("%Y-%m-%d %H:%M")
+                        writer.writerow([current_time, title, previous_price, current_price, drop_amount, affiliate_url])
+        else:
+            print(f"[DEBUG] Skipped item: Found title '{title[:40]}...', but could not find the EGP Price.")
+
+    print(f"\n[DEBUG] Successfully extracted prices for {len(current_scraped_data)} out of {len(unique_products)} items.")
             
     if not drops_found:
-        if not history:
-            print("First run completed. Baseline prices recorded for next hour.")
-        else:
-            print("No price drops detected this hour.")
+        print("No Noon price drops detected this hour.")
 
-    # Save the new prices to history
     save_history(current_scraped_data)
 
 if __name__ == "__main__":
-    scrape_amazon()
+    scrape_noon()
