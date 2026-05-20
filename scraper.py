@@ -44,10 +44,11 @@ def scrape_amazon():
         return
 
     print("Fetching current prices...")
-    payload = {'api_key': API_KEY, 'url': TARGET_URL, 'country_code': 'eg', 'render': 'true'}
+    # Swapped render: true to false, bypasses the 500 error on limited ScraperAPI plans 
+    payload = {'api_key': API_KEY, 'url': TARGET_URL, 'country_code': 'eg'}
     
     try:
-        response = requests.get('http://api.scraperapi.com', params=payload, timeout=90)
+        response = requests.get('http://api.scraperapi.com', params=payload, timeout=60)
         if response.status_code == 200:
             process_prices(response.text)
         else:
@@ -61,65 +62,74 @@ def process_prices(html_content):
     page_title = soup.title.text.strip() if soup.title else "No Title"
     print(f"\n[DEBUG] Page Title Received: {page_title}")
     
-    # Find all product wrapped in <a> tags that actually contain a product title
-    all_links = soup.find_all('a', href=True)
-    
-    # Check for anything containing product-name or product-box-name
-    products = []
-    for link in all_links:
-        title_elem = link.find(attrs={'data-qa': lambda v: v and ('product-name' in v or 'product-box-name' in v)})
-        if title_elem:
-            products.append((link, title_elem))
-    
-    print(f"[DEBUG] Found {len(products)} products on the page.\n")
-    
+    import json
     history = load_history() 
     current_scraped_data = {}
-    
+    products_found = 0
+
     print("--- PRICE DROP ALERTS ---")
     drops_found = False
 
-    for item, title_element in products:
-        # 1. Extract Title
-        title = title_element.get('title', '').strip() or title_element.text.strip()
-        
-        # Extract Link (The item itself is the link element on Noon)
-        href = item['href']
-        if href.startswith('/'):
-            product_link = "https://www.noon.com" + href
-        else:
-            product_link = href
-        
-        # 2. Extract Price
-        price_container = item.find(attrs={'data-qa': 'product-box-price'}) or item.find(class_=lambda x: x and 'price' in x.lower() if isinstance(x, str) else False)
-        
-        price_amount = None
-        if price_container:
-            price_amount = price_container.find('strong') or price_container.find('span', class_='amount')
+    # Noon uses Next.js. Products are embedded in the __NEXT_DATA__ JSON script tag
+    script_tag = soup.find('script', id='__NEXT_DATA__')
+    if script_tag:
+        try:
+            data = json.loads(script_tag.string)
+            # Find the catalog hits inside the deeply nested NextJS structure
+            hits = data.get('props', {}).get('pageProps', {}).get('catalog', {}).get('hits', [])
+            
+            for item in hits:
+                title = item.get('name', 'Unknown')
+                product_link = "https://www.noon.com/egypt-ar/" + item.get('url', '')
+                current_price = item.get('price', 0)
+                
+                if current_price and title != 'Unknown':
+                    products_found += 1
+                    current_scraped_data[title] = {"price": float(current_price), "link": product_link}
+        except Exception as e:
+            print(f"[DEBUG] Error parsing __NEXT_DATA__: {e}")
+    
+    # Fallback to HTML parsing if JSON hits are empty (eg API blocks the tag)
+    if products_found == 0:
+        all_links = soup.find_all('a', href=True)
+        products_html = []
+        for link in all_links:
+            title_elem = link.find(attrs={'data-qa': lambda v: v and ('product-name' in v or 'product-box-name' in v)})
+            if title_elem:
+                products_html.append((link, title_elem))
+                
+        for item, title_element in products_html:
+            title = title_element.get('title', '').strip() or title_element.text.strip()
+            href = item['href']
+            product_link = "https://www.noon.com" + href if href.startswith('/') else href
+            
+            price_container = item.find(attrs={'data-qa': 'product-box-price'}) or item.find(class_=lambda x: x and 'price' in x.lower() if isinstance(x, str) else False)
+            price_amount = price_container.find('strong') or price_container.find('span', class_='amount') if price_container else None
+            
+            if price_amount:
+                try:
+                    current_price = float(price_amount.text.strip().replace(',', ''))
+                    current_scraped_data[title] = {"price": current_price, "link": product_link}
+                    products_found += 1
+                except ValueError:
+                    continue
 
-        if price_amount:
-            # We found the price, clean up formatting (e.g. 7,649)
-            try:
-                current_price = float(price_amount.text.strip().replace(',', ''))
-                current_scraped_data[title] = {"price": current_price, "link": product_link}
-            except ValueError:
-                print(f"[DEBUG] Could not parse price for '{title[:40]}...'")
-                continue
+    print(f"[DEBUG] Found {products_found} products on the page.\n")
 
-            # 3. Compare Prices
-            if title in history:
-                previous_data = history[title]
-                previous_price = previous_data["price"] if isinstance(previous_data, dict) else previous_data
-                if current_price < previous_price:
-                    drops_found = True
-                    drop_amount = round(previous_price - current_price, 2)
-                    print(f"📉 DROP DETECTED: {title[:60]}...")
-                    print(f"   Old Price: ${previous_price} | New Price: ${current_price} | You save: ${drop_amount}\n")
-        else:
-            print(f"[DEBUG] Skipped item: Found title '{title[:40]}...', but could not find the Price.")
+    for title, info in current_scraped_data.items():
+        current_price = info["price"]
+        # 3. Compare Prices
+        if title in history:
+            previous_data = history[title]
+            previous_price = previous_data["price"] if isinstance(previous_data, dict) else previous_data
+            if current_price < previous_price:
+                drops_found = True
+                drop_amount = round(previous_price - current_price, 2)
+                print(f"📉 DROP DETECTED: {title[:60]}...")
+                print(f"   Old Price: ${previous_price} | New Price: ${current_price} | You save: ${drop_amount}\n")
 
     # --- NEW DEBUG SUMMARY ---
-    print(f"\n[DEBUG] Successfully extracted prices for {len(current_scraped_data)} out of {len(products)} items.")
+    print(f"\n[DEBUG] Successfully extracted prices for {len(current_scraped_data)} items.")
             
     if not drops_found:
         if not history:
