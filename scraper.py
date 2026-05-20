@@ -61,7 +61,10 @@ def process_prices(html_content):
     page_title = soup.title.text.strip() if soup.title else "No Title"
     print(f"\n[DEBUG] Page Title Received: {page_title}")
     
-    products = soup.find_all('div', {'data-component-type': 's-search-result'})
+    # Find all product wrapped in <a> tags that actually contain a product title
+    all_links = soup.find_all('a', href=True)
+    products = [link for link in all_links if link.find(attrs={'data-qa': 'product-box-name'})]
+    
     print(f"[DEBUG] Found {len(products)} products on the page.\n")
     
     history = load_history() 
@@ -71,31 +74,24 @@ def process_prices(html_content):
     drops_found = False
 
     for item in products:
-        # 1. Extract Title (Broadened search: Just look for any h2 tag)
-        title_element = item.find('h2')
-        if not title_element: 
-            print("[DEBUG] Skipped an item: Could not find a Title (h2 tag missing).")
-            continue
-        title = title_element.text.strip()
+        # 1. Extract Title
+        title_element = item.find(attrs={'data-qa': 'product-box-name'})
+        title = title_element.get('title', '').strip() or title_element.text.strip()
         
-        # Extract Link
-        link_element = title_element.find('a')
-        product_link = "No Link"
-        if link_element and link_element.has_attr('href'):
-            href = link_element['href']
-            # Convert relative Amazon links if needed
-            if href.startswith('/'):
-                product_link = "https://www.noon.com/egypt-ar" + href
-            else:
-                product_link = href
+        # Extract Link (The item itself is the link element on Noon)
+        href = item['href']
+        if href.startswith('/'):
+            product_link = "https://www.noon.com" + href
+        else:
+            product_link = href
         
         # 2. Extract Price
-        price_whole = item.find('span', class_='a-price-whole')
-        price_fraction = item.find('span', class_='a-price-fraction')
+        price_container = item.find(attrs={'data-qa': 'product-box-price'})
+        price_amount = price_container.find('strong') if price_container else None
         
-        if price_whole and price_fraction:
-            # We found both! Save it.
-            current_price = float(f"{price_whole.text.replace(',', '').replace('.', '')}.{price_fraction.text}")
+        if price_amount:
+            # We found the price, clean up formatting (e.g. 7,649)
+            current_price = float(price_amount.text.strip().replace(',', ''))
             current_scraped_data[title] = {"price": current_price, "link": product_link}
 
             # 3. Compare Prices
