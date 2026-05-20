@@ -44,10 +44,10 @@ def scrape_amazon():
         return
 
     print("Fetching current prices...")
-    payload = {'api_key': API_KEY, 'url': TARGET_URL, 'country_code': 'us'}
+    payload = {'api_key': API_KEY, 'url': TARGET_URL, 'country_code': 'eg', 'render': 'true'}
     
     try:
-        response = requests.get('http://api.scraperapi.com', params=payload, timeout=60)
+        response = requests.get('http://api.scraperapi.com', params=payload, timeout=90)
         if response.status_code == 200:
             process_prices(response.text)
         else:
@@ -63,7 +63,13 @@ def process_prices(html_content):
     
     # Find all product wrapped in <a> tags that actually contain a product title
     all_links = soup.find_all('a', href=True)
-    products = [link for link in all_links if link.find(attrs={'data-qa': 'product-box-name'})]
+    
+    # Check for anything containing product-name or product-box-name
+    products = []
+    for link in all_links:
+        title_elem = link.find(attrs={'data-qa': lambda v: v and ('product-name' in v or 'product-box-name' in v)})
+        if title_elem:
+            products.append((link, title_elem))
     
     print(f"[DEBUG] Found {len(products)} products on the page.\n")
     
@@ -73,9 +79,8 @@ def process_prices(html_content):
     print("--- PRICE DROP ALERTS ---")
     drops_found = False
 
-    for item in products:
+    for item, title_element in products:
         # 1. Extract Title
-        title_element = item.find(attrs={'data-qa': 'product-box-name'})
         title = title_element.get('title', '').strip() or title_element.text.strip()
         
         # Extract Link (The item itself is the link element on Noon)
@@ -86,13 +91,17 @@ def process_prices(html_content):
             product_link = href
         
         # 2. Extract Price
-        price_container = item.find(attrs={'data-qa': 'product-box-price'})
-        price_amount = price_container.find('strong') if price_container else None
+        price_container = item.find(attrs={'data-qa': 'product-box-price'}) or item.find(class_=lambda x: x and 'price' in x.lower() if isinstance(x, str) else False)
         
+        price_amount = None
+        if price_container:
+            price_amount = price_container.find('strong') or price_container.find('span', class_='amount')
+
         if price_amount:
             # We found the price, clean up formatting (e.g. 7,649)
-            current_price = float(price_amount.text.strip().replace(',', ''))
-            current_scraped_data[title] = {"price": current_price, "link": product_link}
+            try:
+                current_price = float(price_amount.text.strip().replace(',', ''))
+                current_scraped_data[title] = {"price": current_price, "link": product_link}
 
             # 3. Compare Prices
             if title in history:
