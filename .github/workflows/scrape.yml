@@ -38,8 +38,12 @@ jobs:
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action Bot"
         
-        # Adds all files containing 'noon' in the name (both categories)
+        # Adds all files containing 'noon' in the name
         git add *noon*.json *noon*.csv || echo "No files to add"
         
         git commit -m "Automated Multi-Category Noon Check" || echo "No changes to commit"
+        
+        # THE FIX: Pulls any recent changes from the repo to prevent conflicts
+        git pull --rebase origin main
+        
         git push
