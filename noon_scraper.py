@@ -46,16 +46,18 @@ def scrape_noon():
     # Loop through each category one by one
     for category_name, paths in CATEGORIES.items():
         print(f"\n========== SCRAPING: {category_name.upper()} ==========")
-        # We add 'render': 'true' to execute JavaScript, and set country to Egypt
+        
+        # We keep render=true, but REMOVE country_code to use faster global proxies
         payload = {
             'api_key': API_KEY, 
             'url': paths['url'],
-            'render': 'true',
-            'country_code': 'eg' 
+            'render': 'true'
         }
         
         try:
-            response = requests.get('http://api.scraperapi.com', params=payload, timeout=60)
+            # INCREASED timeout to 120 seconds because JavaScript rendering is slow
+            response = requests.get('http://api.scraperapi.com', params=payload, timeout=120)
+            
             if response.status_code == 200:
                 process_prices(response.text, paths['history_file'], paths['csv_file'])
             else:
