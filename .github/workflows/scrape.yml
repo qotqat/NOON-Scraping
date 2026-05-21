@@ -38,13 +38,8 @@ jobs:
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action Bot"
         
-        # Add the Noon specific files
-        if [ -f noon_price_history.json ]; then
-          git add noon_price_history.json
-        fi
-        if [ -f noon_price_drops.csv ]; then
-          git add noon_price_drops.csv
-        fi
+        # Adds all files containing 'noon' in the name (both categories)
+        git add *noon*.json *noon*.csv || echo "No files to add"
         
-        git commit -m "Automated Noon price check and CSV update" || echo "No changes to commit"
+        git commit -m "Automated Multi-Category Noon Check" || echo "No changes to commit"
         git push
