@@ -5,6 +5,7 @@ from bs4 import BeautifulSoup
 import csv
 from datetime import datetime
 import re
+import time
 
 API_KEY = os.getenv('SCRAPER_API_KEY')
 
@@ -47,23 +48,33 @@ def scrape_noon():
     for category_name, paths in CATEGORIES.items():
         print(f"\n========== SCRAPING: {category_name.upper()} ==========")
         
-        # We keep render=true, but REMOVE country_code to use faster global proxies
         payload = {
             'api_key': API_KEY, 
             'url': paths['url'],
             'render': 'true'
         }
         
-        try:
-            # INCREASED timeout to 120 seconds because JavaScript rendering is slow
-            response = requests.get('http://api.scraperapi.com', params=payload, timeout=120)
-            
-            if response.status_code == 200:
-                process_prices(response.text, paths['history_file'], paths['csv_file'])
-            else:
-                print(f"Failed to fetch {category_name}. Status code: {response.status_code}")
-        except Exception as e:
-            print(f"An error occurred on {category_name}: {e}")
+        # --- THE RETRY SYSTEM ---
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                print(f"Attempt {attempt + 1} of {max_retries}...")
+                response = requests.get('http://api.scraperapi.com', params=payload, timeout=120)
+                
+                if response.status_code == 200:
+                    process_prices(response.text, paths['history_file'], paths['csv_file'])
+                    break  # Success! Break out of the retry loop and move to the next category
+                else:
+                    print(f"Failed to fetch {category_name}. Status code: {response.status_code}")
+                    if attempt < max_retries - 1:
+                        print("Waiting 10 seconds before trying again...")
+                        time.sleep(10)
+                        
+            except Exception as e:
+                print(f"An error occurred on {category_name}: {e}")
+                if attempt < max_retries - 1:
+                    print("Waiting 10 seconds before trying again...")
+                    time.sleep(10)
 
 def process_prices(html_content, history_file, csv_file):
     soup = BeautifulSoup(html_content, 'html.parser')
