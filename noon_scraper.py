@@ -45,7 +45,7 @@ def scrape_noon():
         return
 
     # SAFETY LIMIT: Adjust this to scrape more pages (Careful with API credit limits!)
-    MAX_PAGES = 3 
+    MAX_PAGES = 10 
 
     # Loop through each category one by one
     for category_name, paths in CATEGORIES.items():
