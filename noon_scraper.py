@@ -125,19 +125,23 @@ def extract_page_data(html_content, all_data_dict):
     items_added = 0
 
     for item in unique_products:
-        # --- SELLER FILTER ("Sold by noon" Check) ---
-        item_full_text = item.get_text(separator=" ").lower()
+        # --- SELLER FILTER STRICT ("Sold by noon" ONLY) ---
+        # We use regex to collapse any weird, giant spaces down to a single space
+        item_full_text = re.sub(r'\s+', ' ', item.get_text(separator=" ").lower())
         is_noon = False
         
-        if "sold by noon" in item_full_text or "noon express" in item_full_text:
+        # Strictly look ONLY for "sold by noon"
+        if "sold by noon" in item_full_text:
             is_noon = True
             
+        # Check image alt tags just in case, again ONLY for "sold by noon"
         for img in item.find_all('img'):
             alt_text = img.get('alt', '').lower()
-            if 'sold by noon' in alt_text or 'noon-express' in alt_text or 'noon express' in alt_text:
+            if 'sold by noon' in alt_text:
                 is_noon = True
                 break
 
+        # If it is a 3rd party seller, quietly skip it
         if not is_noon:
             continue 
 
