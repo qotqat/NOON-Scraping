@@ -51,7 +51,7 @@ def scrape_noon():
         payload = {
             'api_key': API_KEY, 
             'url': paths['url'],
-            'render': 'true'
+            #'render': 'true'
         }
         
         # --- THE RETRY SYSTEM ---
