@@ -44,68 +44,100 @@ def scrape_noon():
         print("Error: API Key not found!")
         return
 
+    # SAFETY LIMIT: Adjust this to scrape more pages (Careful with API credit limits!)
+    MAX_PAGES = 3 
+
     # Loop through each category one by one
     for category_name, paths in CATEGORIES.items():
         print(f"\n========== SCRAPING: {category_name.upper()} ==========")
         
-        payload = {
-            'api_key': API_KEY, 
-            'url': paths['url'],
-            #'render': 'true'
-        }
-        
-        # --- THE RETRY SYSTEM ---
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                print(f"Attempt {attempt + 1} of {max_retries}...")
-                response = requests.get('http://api.scraperapi.com', params=payload, timeout=120)
-                
-                if response.status_code == 200:
-                    process_prices(response.text, paths['history_file'], paths['csv_file'])
-                    break  # Success! Break out of the retry loop and move to the next category
-                else:
-                    print(f"Failed to fetch {category_name}. Status code: {response.status_code}")
+        # This dictionary will hold EVERY product across ALL pages for this category
+        all_category_data = {} 
+
+        for page in range(1, MAX_PAGES + 1):
+            # Construct pagination URL (Adds ?page=1, ?page=2, etc.)
+            base_url = paths['url']
+            separator = '&' if '?' in base_url else '?'
+            page_url = f"{base_url}{separator}page={page}"
+            
+            print(f"\n--- Scraping Page {page} ---")
+            
+            payload = {
+                'api_key': API_KEY, 
+                'url': page_url
+                # 'render': 'true' # Left disabled as per your setup
+            }
+            
+            max_retries = 3
+            page_successful = False
+            products_found = False
+            
+            for attempt in range(max_retries):
+                try:
+                    print(f"Attempt {attempt + 1} of {max_retries}...")
+                    response = requests.get('http://api.scraperapi.com', params=payload, timeout=120)
+                    
+                    if response.status_code == 200:
+                        # Extract products and add them to our master dictionary
+                        products_found = extract_page_data(response.text, all_category_data)
+                        page_successful = True
+                        
+                        if not products_found:
+                            print(f"Page {page} is empty. Reached the end of the category.")
+                            break # Break the retry loop
+                            
+                        break # Success! Break the retry loop and move to next page
+                    else:
+                        print(f"Failed to fetch page {page}. Status code: {response.status_code}")
+                        if attempt < max_retries - 1:
+                            print("Waiting 10 seconds before trying again...")
+                            time.sleep(10)
+                            
+                except Exception as e:
+                    print(f"An error occurred: {e}")
                     if attempt < max_retries - 1:
                         print("Waiting 10 seconds before trying again...")
                         time.sleep(10)
-                        
-            except Exception as e:
-                print(f"An error occurred on {category_name}: {e}")
-                if attempt < max_retries - 1:
-                    print("Waiting 10 seconds before trying again...")
-                    time.sleep(10)
+            
+            # If we broke out of the retry loop because the page was empty, stop paginating entirely
+            if page_successful and not products_found:
+                break
+            
+            # Brief pause between pages to be gentle on the servers
+            time.sleep(2)
 
-def process_prices(html_content, history_file, csv_file):
+        # After checking ALL pages for this category, compare and save the massive list
+        process_and_save_category(all_category_data, paths['history_file'], paths['csv_file'])
+
+
+def extract_page_data(html_content, all_data_dict):
+    """Parses a single HTML page and appends products to the master dictionary."""
     soup = BeautifulSoup(html_content, 'html.parser')
     
     product_links = soup.find_all('a', href=lambda href: href and '/p/' in href)
     unique_products = {link['href']: link for link in product_links}.values()
-    print(f"[DEBUG] Found {len(unique_products)} total products on the page.\n")
+    print(f"[DEBUG] Found {len(unique_products)} total product links on this page.")
     
-    history = load_history(history_file) 
-    ensure_csv_exists(csv_file)
-    current_scraped_data = {}
-    
-    drops_found = False
+    # If the page is empty, return False to stop pagination
+    if len(unique_products) == 0:
+        return False 
+
+    items_added = 0
 
     for item in unique_products:
         # --- SELLER FILTER ("Sold by noon" Check) ---
         item_full_text = item.get_text(separator=" ").lower()
         is_noon = False
         
-        # Check text
         if "sold by noon" in item_full_text or "noon express" in item_full_text:
             is_noon = True
             
-        # Check image alt tags just in case
         for img in item.find_all('img'):
             alt_text = img.get('alt', '').lower()
             if 'sold by noon' in alt_text or 'noon-express' in alt_text or 'noon express' in alt_text:
                 is_noon = True
                 break
 
-        # If it is a 3rd party seller, quietly skip it
         if not is_noon:
             continue 
 
@@ -146,28 +178,54 @@ def process_prices(html_content, history_file, csv_file):
         if price_match:
             current_price = float(price_match.group(1))
             unique_key = base_url 
-            current_scraped_data[unique_key] = current_price
-
-            if unique_key in history:
-                previous_price = history[unique_key]
-                if current_price < previous_price:
-                    drops_found = True
-                    drop_amount = round(previous_price - current_price, 2)
-                    
-                    print(f"📉 DROP DETECTED: {title[:50]}...")
-                    
-                    with open(csv_file, mode='a', newline='', encoding='utf-8') as f:
-                        writer = csv.writer(f)
-                        # Changed the date format to be explicit text so Google Sheets renders it properly
-                        current_time = datetime.now().strftime("%b %d, %Y - %I:%M %p")
-                        writer.writerow([current_time, title, previous_price, current_price, drop_amount, base_url])
-
-    print(f"\n[DEBUG] Successfully extracted {len(current_scraped_data)} 'Sold by Noon' items.")
             
-    if not drops_found:
-        print("No drops detected this hour.")
+            # Save both the price and the title to the master dictionary
+            all_data_dict[unique_key] = {
+                'price': current_price,
+                'title': title
+            }
+            items_added += 1
 
-    save_history(current_scraped_data, history_file)
+    print(f"[DEBUG] Successfully extracted {items_added} 'Sold by Noon' items from this page.")
+    return True # Found products, tell the script to continue to the next page
+
+
+def process_and_save_category(all_category_data, history_file, csv_file):
+    """Compares the massive dictionary of all pages against the JSON memory."""
+    history = load_history(history_file) 
+    ensure_csv_exists(csv_file)
+    
+    drops_found = False
+    new_history = {}
+
+    print(f"\n--- Analyzing {len(all_category_data)} total items across all pages ---")
+
+    for unique_key, data in all_category_data.items():
+        current_price = data['price']
+        title = data['title']
+        
+        # Rebuild the history dictionary with just the prices for the next hour
+        new_history[unique_key] = current_price
+
+        if unique_key in history:
+            previous_price = history[unique_key]
+            if current_price < previous_price:
+                drops_found = True
+                drop_amount = round(previous_price - current_price, 2)
+                
+                print(f"📉 DROP DETECTED: {title[:50]}...")
+                
+                with open(csv_file, mode='a', newline='', encoding='utf-8') as f:
+                    writer = csv.writer(f)
+                    current_time = datetime.now().strftime("%b %d, %Y - %I:%M %p")
+                    writer.writerow([current_time, title, previous_price, current_price, drop_amount, unique_key])
+
+    if not drops_found:
+        print("No drops detected across all pages this run.")
+
+    # Save the massive new dictionary to the JSON file
+    save_history(new_history, history_file)
+
 
 if __name__ == "__main__":
     scrape_noon()
