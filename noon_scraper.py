@@ -12,12 +12,12 @@ API_KEY = os.getenv('SCRAPER_API_KEY')
 # Dictionary containing our target categories and their dedicated files
 CATEGORIES = {
     "electronics": {
-        "url": "https://www.noon.com/egypt-en/electronics/",
+        "url": "https://www.noon.com/egypt-en/electronics-and-mobiles/",
         "history_file": "noon_electronics_history.json",
         "csv_file": "noon_electronics_drops.csv"
     },
     "mobiles": {
-        "url": "https://www.noon.com/egypt-en/mobiles/",
+        "url": "https://www.noon.com/egypt-en/electronics-and-mobiles/mobiles-and-accessories/mobiles-20905/",
         "history_file": "noon_mobiles_history.json",
         "csv_file": "noon_mobiles_drops.csv"
     }
