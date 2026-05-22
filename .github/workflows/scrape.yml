@@ -2,7 +2,7 @@ name: Hourly Noon Scraper
 
 on:
   schedule:
-    # Runs at minute 45 past every 4th hour (e.g., 00:45, 02:45, 04:45, 06:45, 08:45, 10:45)
+    # Runs at minute 45 past every 4th hour (e.g., 00:45, 05:45, 10:45, 15:45, 20:45, 25:45)
     - cron: '45 */5 * * *'
   workflow_dispatch: # You can still click the button to run it manually anytime!
 
