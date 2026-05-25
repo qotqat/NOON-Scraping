@@ -11,12 +11,12 @@ API_KEY = os.getenv('SCRAPER_API_KEY')
 
 CATEGORIES = {
     "electronics": {
-        "url": "https://www.noon.com/egypt-en/electronics-and-mobiles/",
+        "url": "https://www.noon.com/egypt-en/electronics-and-mobiles/?f%5Bpartner%5D%5B%5D=p_9404",
         "history_file": "noon_electronics_history.json",
         "csv_file": "noon_electronics_drops.csv"
     },
     "mobiles": {
-        "url": "https://www.noon.com/egypt-en/electronics-and-mobiles/mobiles-and-accessories/mobiles-20905/",
+        "url": "https://www.noon.com/egypt-en/electronics-and-mobiles/mobiles-and-accessories/mobiles-20905/?f%5Bpartner%5D%5B%5D=p_9404",
         "history_file": "noon_mobiles_history.json",
         "csv_file": "noon_mobiles_drops.csv"
     }
@@ -155,29 +155,26 @@ def extract_page_data(html_content, all_data_dict):
             continue
 
         # --- PRICE & OFFER EXTRACTION ---
-        item_text_for_price = item.get_text(separator=" ").replace(',', '')
+        item_text_for_price = item.get_text(separator=" ")
         
-        # Look for multiple prices in the text (Current Price and Crossed-out Old Price)
-        prices = re.findall(r'EGP\s*(\d+\.?\d*)', item_text_for_price, re.IGNORECASE)
+        # Smart Regex: Anchors to "EGP", grabs the first number, and looks ahead for an optional second number
+        match = re.search(r'EGP\s*([\d\.,]+)(?:\s*(?:EGP)?\s*([\d\.,]+))?', item_text_for_price, re.IGNORECASE)
         
-        if not prices:
-            prices = re.findall(r'(\d+\.\d{2})', item_text_for_price)
-        
-        if prices:
-            current_price = float(prices[0])
+        if match:
+            current_price = float(match.group(1).replace(',', ''))
             original_crossed_out_price = current_price
             has_offer = False
             
-            # If Noon provides a second price, it is an active Offer
-            if len(prices) > 1:
-                possible_old = float(prices[1])
+            # Check if the regex caught a second number
+            if match.group(2):
+                possible_old = float(match.group(2).replace(',', ''))
+                # Validates it's an old price and not a random discount % (e.g., "11% Off")
                 if possible_old > current_price:
                     original_crossed_out_price = possible_old
                     has_offer = True
 
             unique_key = base_url 
             
-            # Save all the new offer data to the master dictionary
             all_data_dict[unique_key] = {
                 'price': current_price,
                 'title': title,
