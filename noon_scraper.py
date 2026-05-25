@@ -9,7 +9,6 @@ import time
 
 API_KEY = os.getenv('SCRAPER_API_KEY')
 
-# Dictionary containing our target categories and their dedicated files
 CATEGORIES = {
     "electronics": {
         "url": "https://www.noon.com/egypt-en/electronics-and-mobiles/",
@@ -37,25 +36,22 @@ def ensure_csv_exists(filename):
     if not os.path.exists(filename):
         with open(filename, mode='w', newline='', encoding='utf-8') as f:
             writer = csv.writer(f)
-            writer.writerow(['Date Detected', 'Product Name', 'Old Price (EGP)', 'New Price (EGP)', 'Drop Amount (EGP)', 'Product Link'])
+            # Added the new "Offer Status" column
+            writer.writerow(['Date Detected', 'Product Name', 'Old Price (EGP)', 'New Price (EGP)', 'Drop Amount (EGP)', 'Product Link', 'Offer Status'])
 
 def scrape_noon():
     if not API_KEY:
         print("Error: API Key not found!")
         return
 
-    # SAFETY LIMIT: Adjust this to scrape more pages (Careful with API credit limits!)
-    MAX_PAGES = 3 
+    MAX_PAGES = 3 # Adjust this to scrape more pages
 
-    # Loop through each category one by one
     for category_name, paths in CATEGORIES.items():
         print(f"\n========== SCRAPING: {category_name.upper()} ==========")
         
-        # This dictionary will hold EVERY product across ALL pages for this category
         all_category_data = {} 
 
         for page in range(1, MAX_PAGES + 1):
-            # Construct pagination URL (Adds ?page=1, ?page=2, etc.)
             base_url = paths['url']
             separator = '&' if '?' in base_url else '?'
             page_url = f"{base_url}{separator}page={page}"
@@ -65,7 +61,6 @@ def scrape_noon():
             payload = {
                 'api_key': API_KEY, 
                 'url': page_url
-                # 'render': 'true' # Left disabled as per your setup
             }
             
             max_retries = 3
@@ -78,78 +73,65 @@ def scrape_noon():
                     response = requests.get('http://api.scraperapi.com', params=payload, timeout=120)
                     
                     if response.status_code == 200:
-                        # Extract products and add them to our master dictionary
                         products_found = extract_page_data(response.text, all_category_data)
                         page_successful = True
                         
                         if not products_found:
                             print(f"Page {page} is empty. Reached the end of the category.")
-                            break # Break the retry loop
+                            break 
                             
-                        break # Success! Break the retry loop and move to next page
+                        break 
                     else:
                         print(f"Failed to fetch page {page}. Status code: {response.status_code}")
                         if attempt < max_retries - 1:
-                            print("Waiting 10 seconds before trying again...")
                             time.sleep(10)
                             
                 except Exception as e:
                     print(f"An error occurred: {e}")
                     if attempt < max_retries - 1:
-                        print("Waiting 10 seconds before trying again...")
                         time.sleep(10)
             
-            # If we broke out of the retry loop because the page was empty, stop paginating entirely
             if page_successful and not products_found:
                 break
             
-            # Brief pause between pages to be gentle on the servers
             time.sleep(2)
 
-        # After checking ALL pages for this category, compare and save the massive list
         process_and_save_category(all_category_data, paths['history_file'], paths['csv_file'])
 
 
 def extract_page_data(html_content, all_data_dict):
-    """Parses a single HTML page and appends products to the master dictionary."""
     soup = BeautifulSoup(html_content, 'html.parser')
     
     product_links = soup.find_all('a', href=lambda href: href and '/p/' in href)
     unique_products = {link['href']: link for link in product_links}.values()
     print(f"[DEBUG] Found {len(unique_products)} total product links on this page.")
     
-    # If the page is empty, return False to stop pagination
     if len(unique_products) == 0:
         return False 
 
     items_added = 0
 
     for item in unique_products:
-        # --- SELLER FILTER STRICT ("Sold by noon" ONLY) ---
-        # We use regex to collapse any weird, giant spaces down to a single space
+        # --- NOON EXPRESS FILTER ---
         item_full_text = re.sub(r'\s+', ' ', item.get_text(separator=" ").lower())
-        is_noon = False
+        is_express = False
         
-        # Strictly look ONLY for "sold by noon"
-        if "sold by noon" in item_full_text:
-            is_noon = True
+        if "noon express" in item_full_text:
+            is_express = True
             
-        # Check image alt tags just in case, again ONLY for "sold by noon"
         for img in item.find_all('img'):
             alt_text = img.get('alt', '').lower()
-            if 'sold by noon' in alt_text:
-                is_noon = True
+            if 'noon express' in alt_text or 'noon-express' in alt_text:
+                is_express = True
                 break
 
-        # If it is a 3rd party seller, quietly skip it
-        if not is_noon:
+        if not is_express:
             continue 
 
-        # --- URL EXTRACTION ---
+        # --- URL & TITLE EXTRACTION ---
         raw_url = item['href']
         base_url = f"https://www.noon.com{raw_url}" if raw_url.startswith('/') else raw_url
 
-        # --- TITLE EXTRACTION ---
         title = ""
         title_el = item.find(attrs={"data-qa": "product-name"})
         if title_el:
@@ -172,30 +154,43 @@ def extract_page_data(html_content, all_data_dict):
         if not title or title.lower() == "placeholder":
             continue
 
-        # --- PRICE EXTRACTION ---
-        item_text = item.get_text(separator=" ").replace(',', '')
-        price_match = re.search(r'EGP\s*(\d+\.?\d*)', item_text, re.IGNORECASE)
+        # --- PRICE & OFFER EXTRACTION ---
+        item_text_for_price = item.get_text(separator=" ").replace(',', '')
         
-        if not price_match:
-            price_match = re.search(r'(\d+\.\d{2})', item_text)
+        # Look for multiple prices in the text (Current Price and Crossed-out Old Price)
+        prices = re.findall(r'EGP\s*(\d+\.?\d*)', item_text_for_price, re.IGNORECASE)
         
-        if price_match:
-            current_price = float(price_match.group(1))
+        if not prices:
+            prices = re.findall(r'(\d+\.\d{2})', item_text_for_price)
+        
+        if prices:
+            current_price = float(prices[0])
+            original_crossed_out_price = current_price
+            has_offer = False
+            
+            # If Noon provides a second price, it is an active Offer
+            if len(prices) > 1:
+                possible_old = float(prices[1])
+                if possible_old > current_price:
+                    original_crossed_out_price = possible_old
+                    has_offer = True
+
             unique_key = base_url 
             
-            # Save both the price and the title to the master dictionary
+            # Save all the new offer data to the master dictionary
             all_data_dict[unique_key] = {
                 'price': current_price,
-                'title': title
+                'title': title,
+                'has_offer': has_offer,
+                'original_crossed_out_price': original_crossed_out_price
             }
             items_added += 1
 
-    print(f"[DEBUG] Successfully extracted {items_added} 'Sold by Noon' items from this page.")
-    return True # Found products, tell the script to continue to the next page
+    print(f"[DEBUG] Successfully extracted {items_added} 'Express' items from this page.")
+    return True
 
 
 def process_and_save_category(all_category_data, history_file, csv_file):
-    """Compares the massive dictionary of all pages against the JSON memory."""
     history = load_history(history_file) 
     ensure_csv_exists(csv_file)
     
@@ -207,27 +202,46 @@ def process_and_save_category(all_category_data, history_file, csv_file):
     for unique_key, data in all_category_data.items():
         current_price = data['price']
         title = data['title']
+        has_offer = data['has_offer']
+        noon_original_price = data['original_crossed_out_price']
         
-        # Rebuild the history dictionary with just the prices for the next hour
         new_history[unique_key] = current_price
 
+        # Check for historical drops (the old way)
+        is_history_drop = False
+        previous_history_price = current_price
         if unique_key in history:
-            previous_price = history[unique_key]
-            if current_price < previous_price:
-                drops_found = True
-                drop_amount = round(previous_price - current_price, 2)
+            if current_price < history[unique_key]:
+                is_history_drop = True
+                previous_history_price = history[unique_key]
+
+        # Log to CSV if it has a Noon Offer OR if it dropped in our history
+        if has_offer or is_history_drop:
+            drops_found = True
+            
+            # Decide what numbers to display based on why it triggered
+            if has_offer:
+                display_old_price = noon_original_price
+                offer_tag = "🚨 NOON OFFER"
+            else:
+                display_old_price = previous_history_price
+                offer_tag = "Historical Drop"
                 
-                print(f"📉 DROP DETECTED: {title[:50]}...")
-                
-                with open(csv_file, mode='a', newline='', encoding='utf-8') as f:
-                    writer = csv.writer(f)
-                    current_time = datetime.now().strftime("%b %d, %Y - %I:%M %p")
-                    writer.writerow([current_time, title, previous_price, current_price, drop_amount, unique_key])
+            drop_amount = round(display_old_price - current_price, 2)
+            
+            if has_offer:
+                print(f"🚨 OFFER DETECTED: {title[:50]}... (Was {display_old_price}, Now {current_price})")
+            elif is_history_drop:
+                print(f"📉 DROP DETECTED: {title[:50]}... (Dropped from {display_old_price})")
+            
+            with open(csv_file, mode='a', newline='', encoding='utf-8') as f:
+                writer = csv.writer(f)
+                current_time = datetime.now().strftime("%b %d, %Y - %I:%M %p")
+                writer.writerow([current_time, title, display_old_price, current_price, drop_amount, unique_key, offer_tag])
 
     if not drops_found:
-        print("No drops detected across all pages this run.")
+        print("No drops or offers detected across all pages this run.")
 
-    # Save the massive new dictionary to the JSON file
     save_history(new_history, history_file)
 
 
