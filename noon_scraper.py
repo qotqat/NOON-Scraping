@@ -14,11 +14,13 @@ CATEGORIES = {
         "url": "https://www.noon.com/egypt-en/electronics-and-mobiles/?f%5Bpartner%5D%5B%5D=p_9404",
         "history_file": "noon_electronics_history.json",
         "csv_file": "noon_electronics_drops.csv"
+        "max_pages": 10
     },
     "mobiles": {
         "url": "https://www.noon.com/egypt-en/electronics-and-mobiles/mobiles-and-accessories/mobiles-20905/?f%5Bpartner%5D%5B%5D=p_9404",
         "history_file": "noon_mobiles_history.json",
         "csv_file": "noon_mobiles_drops.csv"
+        "max_pages": 5
     }
 }
 
@@ -44,19 +46,22 @@ def scrape_noon():
         print("Error: API Key not found!")
         return
 
-    MAX_PAGES = 1 # Adjust this to scrape more pages
-
+    # Loop through each category one by one
     for category_name, paths in CATEGORIES.items():
         print(f"\n========== SCRAPING: {category_name.upper()} ==========")
         
         all_category_data = {} 
+        
+        # --- THE FIX ---
+        # The loop now reads the specific 'max_pages' number assigned to this category
+        category_page_limit = paths['max_pages']
 
-        for page in range(1, MAX_PAGES + 1):
+        for page in range(1, category_page_limit + 1):
             base_url = paths['url']
             separator = '&' if '?' in base_url else '?'
             page_url = f"{base_url}{separator}page={page}"
             
-            print(f"\n--- Scraping Page {page} ---")
+            print(f"\n--- Scraping Page {page} of {category_page_limit} ---")
             
             payload = {
                 'api_key': API_KEY, 
