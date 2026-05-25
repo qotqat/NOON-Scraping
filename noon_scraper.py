@@ -13,13 +13,13 @@ CATEGORIES = {
     "electronics": {
         "url": "https://www.noon.com/egypt-en/electronics-and-mobiles/?f%5Bpartner%5D%5B%5D=p_9404",
         "history_file": "noon_electronics_history.json",
-        "csv_file": "noon_electronics_drops.csv"
+        "csv_file": "noon_electronics_drops.csv",
         "max_pages": 10
     },
     "mobiles": {
         "url": "https://www.noon.com/egypt-en/electronics-and-mobiles/mobiles-and-accessories/mobiles-20905/?f%5Bpartner%5D%5B%5D=p_9404",
         "history_file": "noon_mobiles_history.json",
-        "csv_file": "noon_mobiles_drops.csv"
+        "csv_file": "noon_mobiles_drops.csv",
         "max_pages": 5
     }
 }
