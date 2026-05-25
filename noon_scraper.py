@@ -44,7 +44,7 @@ def scrape_noon():
         print("Error: API Key not found!")
         return
 
-    MAX_PAGES = 3 # Adjust this to scrape more pages
+    MAX_PAGES = 1 # Adjust this to scrape more pages
 
     for category_name, paths in CATEGORIES.items():
         print(f"\n========== SCRAPING: {category_name.upper()} ==========")
