@@ -34,13 +34,13 @@ def save_history(history, filename):
     with open(filename, 'w') as file:
         json.dump(history, file, indent=4)
 
-def ensure_csv_exists(filename):
-    if not os.path.exists(filename):
-        with open(filename, mode='w', newline='', encoding='utf-8') as f:
-            writer = csv.writer(f)
-            # Added the new "Offer Status" column
-            writer.writerow(['Date Detected', 'Product Name', 'Old Price (EGP)', 'New Price (EGP)', 'Drop Amount (EGP)', 'Product Link', 'Offer Status'])
-
+def reset_csv_for_new_run(filename):
+    # By removing the "if exists" check and using mode='w' (write), 
+    # this completely wipes the old file and sets up fresh headers every run.
+    with open(filename, mode='w', newline='', encoding='utf-8') as f:
+        writer = csv.writer(f)
+        writer.writerow(['Date Detected', 'Product Name', 'Old Price (EGP)', 'New Price (EGP)', 'Drop Amount (EGP)', 'Product Link', 'Offer Status'])
+        
 def scrape_noon():
     if not API_KEY:
         print("Error: API Key not found!")
@@ -194,7 +194,7 @@ def extract_page_data(html_content, all_data_dict):
 
 def process_and_save_category(all_category_data, history_file, csv_file):
     history = load_history(history_file) 
-    ensure_csv_exists(csv_file)
+    reset_csv_for_new_run(csv_file)
     
     drops_found = False
     new_history = {}
@@ -222,17 +222,23 @@ def process_and_save_category(all_category_data, history_file, csv_file):
             drops_found = True
             
             # Decide what numbers to display based on why it triggered
-            if has_offer:
+            if has_offer and is_history_drop:
+                # It has a Noon badge AND it dropped lower than our last check!
+                display_old_price = noon_original_price
+                offer_tag = "🚨 NOON OFFER + 📉 Extra Drop"
+            elif has_offer:
+                # It's an official Noon offer, but the price hasn't changed since last hour
                 display_old_price = noon_original_price
                 offer_tag = "🚨 NOON OFFER"
-            else:
+            elif is_history_drop:
+                # No official offer badge, but the seller quietly dropped the price
                 display_old_price = previous_history_price
-                offer_tag = "Historical Drop"
+                offer_tag = "📉 Historical Drop"
                 
             drop_amount = round(display_old_price - current_price, 2)
             
-            if has_offer:
-                print(f"🚨 OFFER DETECTED: {title[:50]}... (Was {display_old_price}, Now {current_price})")
+            if "NOON OFFER" in offer_tag:
+                print(f"{offer_tag}: {title[:50]}... (Was {display_old_price}, Now {current_price})")
             elif is_history_drop:
                 print(f"📉 DROP DETECTED: {title[:50]}... (Dropped from {display_old_price})")
             
